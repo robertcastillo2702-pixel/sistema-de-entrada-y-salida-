@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Biometría Facial - Abasto</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    .laser-line {
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, transparent, #10b981, #06b6d4, transparent);
+      box-shadow: 0 0 15px #10b981;
+      animation: laserSweep 1.8s ease-in-out infinite alternate;
+    }
+    @keyframes laserSweep {
+      0% { top: 6%; opacity: 0.2; }
+      50% { opacity: 1; }
+      100% { top: 92%; opacity: 0.2; }
+    }
+  </style>
+</head>
+<body class="h-full flex flex-col bg-slate-950 text-slate-100 font-sans p-3 sm:p-5 max-w-lg mx-auto">
+
+  <!-- CABECERA -->
+  <header class="flex items-center justify-between bg-slate-900 border border-slate-800 p-3.5 rounded-2xl shadow-lg shrink-0 mb-3">
+    <div class="flex items-center gap-2.5">
+      <div class="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+        <i data-lucide="scan-face" class="w-5 h-5"></i>
+      </div>
+      <div>
+        <h1 class="text-sm font-bold text-white tracking-wide">BIO-CONTROL ABASTO</h1>
+        <p id="txtFecha" class="text-[10px] text-slate-400">--/--/----</p>
+      </div>
+    </div>
+
+    <button onclick="toggleAdminModal()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-bold text-slate-300 flex items-center gap-1.5 transition">
+      <i data-lucide="lock" class="w-3.5 h-3.5 text-amber-400"></i>
+      <span>Admin</span>
+    </button>
+  </header>
+
+  <!-- CONTENEDOR PRINCIPAL -->
+  <main class="flex-1 flex flex-col gap-3 overflow-y-auto pb-4">
+
+    <!-- 1. VISOR DE CÁMARA BIOMÉTRICA CON LÁSER -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 flex flex-col">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          Reconocimiento Facial Activo
+        </span>
+        <span id="aiStatus" class="text-[10px] text-emerald-400 font-semibold">Iniciando IA...</span>
+      </div>
+
+      <!-- Video Feed & Overlay Box -->
+      <div class="relative w-full h-56 bg-black rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center">
+        <video id="webcam" autoplay muted playsinline class="w-full h-full object-cover transform -scale-x-100"></video>
+        <canvas id="faceCanvas" class="absolute inset-0 w-full h-full pointer-events-none transform -scale-x-100"></canvas>
+        <div id="laserAnim" class="laser-line pointer-events-none hidden"></div>
+
+        <!-- Botón para activar cámara si el teléfono pide toque del usuario -->
+        <div id="btnActivarCamaraBox" class="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-4 text-center">
+          <i data-lucide="camera" class="w-10 h-10 text-emerald-400 mb-2"></i>
+          <p class="text-xs font-bold text-white">Toca para Activar la Cámara</p>
+          <p class="text-[10px] text-slate-400 mt-1 mb-3">Requerido por permisos del teléfono</p>
+          <button onclick="startCamera()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-600/30">
+            Encender Cámara
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. TRABAJADOR DETECTADO & MARCAJE -->
+    <div id="cardDetalleTrabajador" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col gap-3">
+      
+      <!-- Estado de espera -->
+      <div id="esperandoRostro" class="py-4 flex flex-col items-center justify-center text-center text-slate-500">
+        <i data-lucide="user" class="w-8 h-8 text-slate-600 mb-1"></i>
+        <p class="text-xs font-bold text-slate-300">Párate frente a la cámara</p>
+        <p class="text-[10px] text-slate-500">El sistema te reconocerá automáticamente</p>
+      </div>
+
+      <!-- Ficha del trabajador identificado -->
+      <div id="trabajadorIdentificado" class="hidden flex flex-col gap-3">
+        
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+          <div class="flex items-center gap-3">
+            <div id="fotoDetectada" class="w-12 h-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-lg overflow-hidden border border-emerald-500/40">
+              --
+            </div>
+            <div>
+              <div class="flex items-center gap-1.5">
+                <h3 id="lblNombre" class="text-sm font-bold text-white">Nombre</h3>
+                <span class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">Rostro OK</span>
+              </div>
+              <p id="lblTurno" class="text-[11px] text-emerald-400 font-semibold mt-0.5">Turno: 07:00 a 15:00</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Barra de Tolerancia Semanal (30 minutos) -->
+        <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+          <div class="flex justify-between items-center text-[11px] font-semibold">
+            <span class="text-slate-400">Retraso acumulado (Máx 30 min):</span>
+            <span id="lblMinutosTarde" class="font-bold text-emerald-400 font-mono">0 / 30 min</span>
+          </div>
+          <div class="w-full bg-slate-800 h-2 rounded-full mt-1.5 overflow-hidden">
+            <div id="barraBono" class="bg-emerald-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+          </div>
+          <p id="lblEstadoBono" class="text-[10px] font-bold text-emerald-400 mt-1 flex items-center gap-1">
+            <i data-lucide="check-circle" class="w-3 h-3"></i> Bono de Asistencia Activo
+          </p>
+        </div>
+
+        <!-- Marcas del Día -->
+        <div class="grid grid-cols-4 gap-1.5 text-center text-xs font-mono">
+          <div class="bg-slate-950 p-2 rounded-lg border border-slate-800">
+            <span class="text-[9px] text-slate-500 block font-sans">1. Entrada</span>
+            <span id="txtEntrada" class="font-bold text-white mt-0.5 block">--:--</span>
+          </div>
+          <div class="bg-slate-950 p-2 rounded-lg border border-slate-800">
+            <span class="text-[9px] text-slate-500 block font-sans">2. Almuerzo</span>
+            <span id="txtAlmuerzo" class="font-bold text-white mt-0.5 block">--:--</span>
+          </div>
+          <div class="bg-slate-950 p-2 rounded-lg border border-slate-800">
+            <span class="text-[9px] text-slate-500 block font-sans">3. Regreso</span>
+            <span id="txtRegreso" class="font-bold text-white mt-0.5 block">--:--</span>
+          </div>
+          <div class="bg-slate-950 p-2 rounded-lg border border-slate-800">
+            <span class="text-[9px] text-slate-500 block font-sans">4. Salida</span>
+            <span id="txtSalida" class="font-bold text-white mt-0.5 block">--:--</span>
+          </div>
+        </div>
+
+        <!-- Botones de Marcaje Inteligente (Bloqueo Estricto de 1 Marcaje) -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+          <button id="btnPunchIn" onclick="hacerMarcaje('entrada')" class="py-3 px-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 shadow-md disabled:opacity-20 disabled:cursor-not-allowed">
+            <i data-lucide="log-in" class="w-4 h-4"></i> Entrada
+          </button>
+          <button id="btnPunchLStart" onclick="hacerMarcaje('almuerzo')" class="py-3 px-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 shadow-md disabled:opacity-20 disabled:cursor-not-allowed">
+            <i data-lucide="utensils" class="w-4 h-4"></i> Almuerzo
+          </button>
+          <button id="btnPunchLEnd" onclick="hacerMarcaje('regreso')" class="py-3 px-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 shadow-md disabled:opacity-20 disabled:cursor-not-allowed">
+            <i data-lucide="clock" class="w-4 h-4"></i> Fin Almuerzo
+          </button>
+          <button id="btnPunchOut" onclick="hacerMarcaje('salida')" class="py-3 px-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 shadow-md disabled:opacity-20 disabled:cursor-not-allowed">
+            <i data-lucide="log-out" class="w-4 h-4"></i> Salida
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 3. TABLA RESUMEN DE HOY -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-3.5">
+      <h4 class="text-xs font-bold text-slate-300 uppercase mb-2 flex items-center gap-1.5">
+        <i data-lucide="list" class="w-3.5 h-3.5 text-emerald-400"></i> Bitácora de Asistencia Hoy
+      </h4>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs font-mono">
+          <thead class="text-[9px] text-slate-500 border-b border-slate-800 uppercase">
+            <tr>
+              <th class="p-1.5">Trabajador</th>
+              <th class="p-1.5">Turno</th>
+              <th class="p-1.5">Entrada</th>
+              <th class="p-1.5">Salida</th>
+              <th class="p-1.5">Retraso</th>
+              <th class="p-1.5 text-right">Bono</th>
+            </tr>
+          </thead>
+          <tbody id="tablaBitacora" class="divide-y divide-slate-800/80 text-slate-300 text-[11px]">
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- MODAL: PANEL ADMINISTRADOR & ENROLAMIENTO FACIAL -->
+  <div id="modalAdmin" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-700 max-w-md w-full rounded-2xl p-5 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+      
+      <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+        <h3 class="text-sm font-bold text-white flex items-center gap-1.5">
+          <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i> Enrolamiento & Turnos (Admin)
+        </h3>
+        <button onclick="toggleAdminModal()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <!-- FORMULARIO DE ENROLAMIENTO FACIAL -->
+      <form onsubmit="guardarNuevoTrabajador(event)" class="space-y-3 text-xs">
+        <div>
+          <label class="block text-slate-300 mb-1 font-semibold">Nombre del Trabajador:</label>
+          <input type="text" id="adminNombre" required placeholder="Ej: Robert Castillo" class="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white">
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-slate-300 mb-1 font-semibold">Hora Entrada:</label>
+            <input type="time" id="adminEntrada" value="07:00" required class="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white font-mono">
+          </div>
+          <div>
+            <label class="block text-slate-300 mb-1 font-semibold">Hora Salida:</label>
+            <input type="time" id="adminSalida" value="15:00" required class="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white font-mono">
+          </div>
+        </div>
+
+        <!-- CAPTURAR ROSTRO DEL TRABAJADOR -->
+        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
+          <span class="block text-[11px] font-bold text-slate-300">Biometría Facial:</span>
+          <button type="button" onclick="capturarDescriptorFacial()" class="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 shadow-md">
+            <i data-lucide="scan" class="w-4 h-4"></i> Escanear Rostro Actual
+          </button>
+          <p id="lblEnrollStatus" class="text-[10px] text-amber-300 text-center font-medium">Coloca al trabajador frente a la cámara y toca Escanear</p>
+        </div>
+
+        <button type="submit" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg transition">
+          Guardar Trabajador Enrolado
+        </button>
+      </form>
+
+      <!-- CAMBIO RÁPIDO DE TURNOS -->
+      <div class="pt-2 border-t border-slate-800">
+        <h4 class="text-xs font-bold text-slate-300 mb-2">Turnos Asignados:</h4>
+        <div id="listaTurnos" class="space-y-2 max-h-40 overflow-y-auto"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MODAL: PIN MASTER -->
+  <div id="modalPin" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-700 max-w-xs w-full p-5 rounded-2xl text-center space-y-3 shadow-2xl">
+      <i data-lucide="lock" class="w-8 h-8 text-emerald-400 mx-auto"></i>
+      <h3 class="text-sm font-bold text-white">Clave de Administrador</h3>
+      <p class="text-[11px] text-slate-400">PIN por defecto: <span class="font-bold text-emerald-400">1234</span></p>
+      <input type="password" id="inputPin" placeholder="****" class="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-center text-lg font-bold text-white font-mono">
+      <div class="flex gap-2">
+        <button onclick="cerrarPin()" class="flex-1 py-2 bg-slate-800 rounded-xl text-xs font-bold text-slate-300">Cancelar</button>
+        <button onclick="verificarPin()" class="flex-1 py-2 bg-emerald-600 rounded-xl text-xs font-bold text-white">Ingresar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast" class="fixed bottom-4 right-4 z-50 px-4 py-2.5 rounded-xl shadow-2xl text-xs font-bold flex items-center gap-2 bg-emerald-600 text-white transform transition-all duration-300 translate-y-20 opacity-0 pointer-events-none">
+    <span id="toastMsg">Mensaje</span>
+  </div>
+
+  <!-- SCRIPT MOTOR BIOMÉTRICO -->
+  <script>
+    const DB_KEY = "abasto_biometric_pro_db";
+    const PIN_ADMIN = "1234";
+
+    const defaultData = {
+      trabajadores: [
+        { id: "1", nombre: "Robert Castillo", entrada: "07:00", salida: "15:00", descriptor: null, foto: null },
+        { id: "2", nombre: "Carlos Mendoza", entrada: "07:00", salida: "15:00", descriptor: null, foto: null }
+      ],
+      marcas: [],
+      retrasosSemanales: { "1": 0, "2": 0 }
+    };
+
+    let appData = cargarStorage();
+    let trabajadorActivo = null;
+    let streamVideo = null;
+    let modelosListos = false;
+    let faceMatcher = null;
+    let descriptorTemporal = null;
+    let fotoTemporal = null;
+
+    function getHoy() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    function getHoraActual() {
+      const d = new Date();
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+
+    function cargarStorage() {
+      const local = localStorage.getItem(DB_KEY);
+      return local ? JSON.parse(local) : defaultData;
+    }
+
+    function guardarStorage() {
+      localStorage.setItem(DB_KEY, JSON.stringify(appData));
+    }
+
+    // 1. CARGA DE MODELOS BIOMÉTRICOS
+    async function initModelos() {
+      try {
+        const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+        ]);
+        modelosListos = true;
+        document.getElementById("aiStatus").innerText = "IA Biométrica Lista";
+        actualizarFaceMatcher();
+        startCamera();
+      } catch (e) {
+        console.warn("Fallo carga CDN modelos:", e);
+        document.getElementById("aiStatus").innerText = "Modo Cámara Directa";
+        startCamera();
+      }
+    }
+
+    function actualizarFaceMatcher() {
+      if (!modelosListos) return;
+      const labeled = [];
+      appData.trabajadores.forEach(t => {
+        if (t.descriptor && Array.isArray(t.descriptor)) {
+          labeled.push(new faceapi.LabeledFaceDescriptors(t.id, [new Float32Array(t.descriptor)]));
+        }
+      });
+      if (labeled.length > 0) {
+        faceMatcher = new faceapi.FaceMatcher(labeled, 0.58);
+      }
+    }
+
+    // 2. CÁMARA & DETECCIÓN FACIAL CONTINUA
+    async function startCamera() {
+      const video = document.getElementById("webcam");
+      const btnBox = document.getElementById("btnActivarCamaraBox");
+      const laser = document.getElementById("laserAnim");
+
+      try {
+        streamVideo = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
+        });
+        video.srcObject = streamVideo;
+        btnBox.classList.add("hidden");
+        laser.classList.remove("hidden");
+
+        video.onloadedmetadata = () => {
+          bucleDeteccionFacial(video);
+        };
+      } catch (err) {
+        console.error("Error cámara:", err);
+        btnBox.classList.remove("hidden");
+      }
+    }
+
+    async function bucleDeteccionFacial(video) {
+      const canvas = document.getElementById("faceCanvas");
+      const displaySize = { width: video.videoWidth || 320, height: video.videoHeight || 240 };
+      faceapi.matchDimensions(canvas, displaySize);
+
+      setInterval(async () => {
+        if (!modelosListos || video.paused || video.ended) return;
+
+        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (detection) {
+          const resized = faceapi.resizeResults(detection, displaySize);
+          const box = resized.detection.box;
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+          if (faceMatcher) {
+            const match = faceMatcher.findBestMatch(detection.descriptor);
+            if (match.label !== 'unknown') {
+              const t = appData.trabajadores.find(x => x.id === match.label);
+              if (t && (!trabajadorActivo || trabajadorActivo.id !== t.id)) {
+                seleccionarTrabajador(t);
+              }
+            }
+          }
+        }
+      }, 500);
+    }
+
+    function seleccionarTrabajador(t) {
+      trabajadorActivo = t;
+      document.getElementById("esperandoRostro").classList.add("hidden");
+      document.getElementById("trabajadorIdentificado").classList.remove("hidden");
+
+      document.getElementById("lblNombre").innerText = t.nombre;
+      document.getElementById("lblTurno").innerText = `Turno: ${t.entrada} a ${t.salida}`;
+
+      const fotoBox = document.getElementById("fotoDetectada");
+      if (t.foto) {
+        fotoBox.innerHTML = `<img src="${t.foto}" class="w-full h-full object-cover">`;
+      } else {
+        fotoBox.innerText = t.nombre.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+      }
+
+      // Bono & Tolerancia
+      const retraso = appData.retrasosSemanales[t.id] || 0;
+      const pct = Math.min(100, Math.round((retraso / 30) * 100));
+      document.getElementById("lblMinutosTarde").innerText = `${retraso} / 30 min`;
+
+      const bar = document.getElementById("barraBono");
+      const lblBono = document.getElementById("lblEstadoBono");
+      bar.style.width = `${pct}%`;
+
+      if (retraso > 30) {
+        bar.className = "bg-rose-500 h-2 rounded-full";
+        lblBono.className = "text-[10px] font-bold text-rose-400 mt-1 flex items-center gap-1";
+        lblBono.innerHTML = '<i data-lucide="alert-triangle" class="w-3 h-3"></i> ✗ Bono Perdido (>30 min)';
+      } else {
+        bar.className = "bg-emerald-500 h-2 rounded-full";
+        lblBono.className = "text-[10px] font-bold text-emerald-400 mt-1 flex items-center gap-1";
+        lblBono.innerHTML = '<i data-lucide="check-circle" class="w-3 h-3"></i> ✓ Bono de Asistencia Activo';
+      }
+
+      // Marcas de hoy
+      const hoy = getHoy();
+      const rec = appData.marcas.find(m => m.trabajadorId === t.id && m.fecha === hoy) || {};
+
+      document.getElementById("txtEntrada").innerText = rec.entrada || "--:--";
+      document.getElementById("txtAlmuerzo").innerText = rec.almuerzo || "--:--";
+      document.getElementById("txtRegreso").innerText = rec.regreso || "--:--";
+      document.getElementById("txtSalida").innerText = rec.salida || "--:--";
+
+      // Control de marcaje único
+      document.getElementById("btnPunchIn").disabled = !!rec.entrada;
+      document.getElementById("btnPunchLStart").disabled = !rec.entrada || !!rec.almuerzo;
+      document.getElementById("btnPunchLEnd").disabled = !rec.almuerzo || !!rec.regreso;
+      document.getElementById("btnPunchOut").disabled = (!rec.regreso && !rec.entrada) || !!rec.salida;
+
+      lucide.createIcons();
+    }
+
+    function hacerMarcaje(tipo) {
+      if (!trabajadorActivo) return;
+      const hoy = getHoy();
+      const ahora = getHoraActual();
+
+      let rec = appData.marcas.find(m => m.trabajadorId === trabajadorActivo.id && m.fecha === hoy);
+      if (!rec) {
+        rec = { trabajadorId: trabajadorActivo.id, fecha: hoy, entrada: null, almuerzo: null, regreso: null, salida: null };
+        appData.marcas.push(rec);
+      }
+
+      if (tipo === 'entrada') {
+        rec.entrada = ahora;
+        const [hT, mT] = trabajadorActivo.entrada.split(':').map(Number);
+        const [hA, mA] = ahora.split(':').map(Number);
+        const diff = (hA * 60 + mA) - (hT * 60 + mT);
+        const late = diff > 0 ? diff : 0;
+        
+        appData.retrasosSemanales[trabajadorActivo.id] = (appData.retrasosSemanales[trabajadorActivo.id] || 0) + late;
+        showToast(late > 0 ? `Entrada: ${ahora} (${late} min retraso)` : `¡Puntual! Entrada: ${ahora}`);
+      } else if (tipo === 'almuerzo') {
+        rec.almuerzo = ahora;
+        showToast(`Salida a almuerzo: ${ahora}`);
+      } else if (tipo === 'regreso') {
+        rec.regreso = ahora;
+        showToast(`Regreso de almuerzo: ${ahora}`);
+      } else if (tipo === 'salida') {
+        rec.salida = ahora;
+        showToast(`Salida registrada: ${ahora}`);
+      }
+
+      guardarStorage();
+      seleccionarTrabajador(trabajadorActivo);
+      renderBitacora();
+
+      // Auto-limpieza tras 4 seg para el siguiente
+      setTimeout(() => {
+        if (trabajadorActivo && trabajadorActivo.id === rec.trabajadorId) {
+          trabajadorActivo = null;
+          document.getElementById("trabajadorIdentificado").classList.add("hidden");
+          document.getElementById("esperandoRostro").classList.remove("hidden");
+        }
+      }, 4000);
+    }
+
+    function renderBitacora() {
+      const hoy = getHoy();
+      const tbody = document.getElementById("tablaBitacora");
+      tbody.innerHTML = "";
+
+      appData.trabajadores.forEach(t => {
+        const rec = appData.marcas.find(m => m.trabajadorId === t.id && m.fecha === hoy) || {};
+        const ret = appData.retrasosSemanales[t.id] || 0;
+        const perdio = ret > 30;
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="p-1.5 font-bold text-white">${t.nombre}</td>
+          <td class="p-1.5 text-slate-400">${t.entrada}-${t.salida}</td>
+          <td class="p-1.5 ${rec.entrada ? 'text-emerald-400 font-bold' : 'text-slate-600'}">${rec.entrada || '--:--'}</td>
+          <td class="p-1.5 ${rec.salida ? 'text-emerald-400 font-bold' : 'text-slate-600'}">${rec.salida || '--:--'}</td>
+          <td class="p-1.5 ${ret > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400'}">${ret}m</td>
+          <td class="p-1.5 text-right">
+            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${perdio ? 'bg-rose-950 text-rose-400' : 'bg-emerald-950 text-emerald-400'}">
+              ${perdio ? 'Perdido' : 'Activo'}
+            </span>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // 3. ENROLAMIENTO FACIAL DEL ADMIN
+    async function capturarDescriptorFacial() {
+      const video = document.getElementById("webcam");
+      const lbl = document.getElementById("lblEnrollStatus");
+
+      if (!modelosListos) {
+        lbl.innerText = "IA aún cargando. Espera 3 segundos.";
+        return;
+      }
+
+      lbl.innerText = "Escaneando rostro...";
+      const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+
+      if (detection) {
+        descriptorTemporal = Array.from(detection.descriptor);
+
+        // Capturar foto para el avatar
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = 160; tempCanvas.height = 160;
+        const tCtx = tempCanvas.getContext('2d');
+        tCtx.drawImage(video, 0, 0, 160, 160);
+        fotoTemporal = tempCanvas.toDataURL('image/jpeg', 0.8);
+
+        lbl.innerText = "✓ ¡Rostro escaneado con éxito!";
+        lbl.className = "text-[10px] text-emerald-400 text-center font-bold";
+      } else {
+        descriptorTemporal = null;
+        lbl.innerText = "⚠ No se detectó rostro. Mira directo a la cámara.";
+        lbl.className = "text-[10px] text-rose-400 text-center font-semibold";
+      }
+    }
+
+    function guardarNuevoTrabajador(e) {
+      e.preventDefault();
+      const nombre = document.getElementById("adminNombre").value.trim();
+      const entrada = document.getElementById("adminEntrada").value;
+      const salida = document.getElementById("adminSalida").value;
+
+      const nuevo = {
+        id: String(Date.now()),
+        nombre: nombre,
+        entrada: entrada,
+        salida: salida,
+        descriptor: descriptorTemporal,
+        foto: fotoTemporal
+      };
+
+      appData.trabajadores.push(nuevo);
+      appData.retrasosSemanales[nuevo.id] = 0;
+      guardarStorage();
+      actualizarFaceMatcher();
+
+      document.getElementById("adminNombre").value = "";
+      descriptorTemporal = null;
+      fotoTemporal = null;
+      document.getElementById("lblEnrollStatus").innerText = "Coloca al trabajador frente a la cámara y toca Escanear";
+      document.getElementById("lblEnrollStatus").className = "text-[10px] text-amber-300 text-center font-medium";
+
+      renderAdminTurnos();
+      renderBitacora();
+      toggleAdminModal();
+      showToast(`¡Trabajador ${nombre} enrolado con éxito!`);
+    }
+
+    function renderAdminTurnos() {
+      const c = document.getElementById("listaTurnos");
+      c.innerHTML = "";
+      appData.trabajadores.forEach(t => {
+        const div = document.createElement("div");
+        div.className = "flex items-center justify-between p-2 bg-slate-950 rounded-xl border border-slate-800 text-xs";
+        div.innerHTML = `
+          <span class="font-bold text-white">${t.nombre}</span>
+          <div class="flex items-center gap-1 font-mono">
+            <input type="time" id="shIn_${t.id}" value="${t.entrada}" class="bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-white">
+            <span class="text-slate-500">a</span>
+            <input type="time" id="shOut_${t.id}" value="${t.salida}" class="bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-white">
+            <button onclick="guardarTurno('${t.id}')" class="px-2 py-0.5 bg-emerald-600 text-white rounded font-bold text-[10px]">OK</button>
+          </div>
+        `;
+        c.appendChild(div);
+      });
+    }
+
+    function guardarTurno(id) {
+      const inV = document.getElementById(`shIn_${id}`).value;
+      const outV = document.getElementById(`shOut_${id}`).value;
+      const t = appData.trabajadores.find(x => x.id === id);
+      if (t) {
+        t.entrada = inV;
+        t.salida = outV;
+        guardarStorage();
+        renderBitacora();
+        showToast(`Turno de ${t.nombre} actualizado`);
+      }
+    }
+
+    // 4. MODAL ADMIN PIN
+    function toggleAdminModal() {
+      const modal = document.getElementById("modalAdmin");
+      if (modal.classList.contains("hidden")) {
+        document.getElementById("modalPin").classList.remove("hidden");
+        document.getElementById("inputPin").value = "";
+        document.getElementById("inputPin").focus();
+      } else {
+        modal.classList.add("hidden");
+      }
+    }
+
+    function cerrarPin() {
+      document.getElementById("modalPin").classList.add("hidden");
+    }
+
+    function verificarPin() {
+      const pin = document.getElementById("inputPin").value;
+      if (pin === PIN_ADMIN) {
+        cerrarPin();
+        document.getElementById("modalAdmin").classList.remove("hidden");
+        renderAdminTurnos();
+      } else {
+        showToast("PIN Incorrecto (1234)");
+      }
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById("toast");
+      document.getElementById("toastMsg").innerText = msg;
+      t.classList.remove("translate-y-20", "opacity-0", "pointer-events-none");
+      setTimeout(() => {
+        t.classList.add("translate-y-20", "opacity-0", "pointer-events-none");
+      }, 3000);
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const d = new Date();
+      document.getElementById("txtFecha").innerText = d.toLocaleDateString('es-ES', { weekday: 'long', day: '2-digit', month: 'short' });
+      renderBitacora();
+      lucide.createIcons();
+      initModelos();
+    });
+  </script>
+</body>
+</html>
