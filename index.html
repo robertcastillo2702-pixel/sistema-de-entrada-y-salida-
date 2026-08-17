@@ -180,6 +180,14 @@
           </div>
         </div>
 
+        <!-- ALERTA DE INTERVALO DE SEGURIDAD (5 MINUTOS TRAS ENTRADA) -->
+        <div id="boxBloqueoIntervalo" class="hidden p-2.5 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-2">
+          <i data-lucide="clock-alert" class="w-4 h-4 text-amber-600 shrink-0"></i>
+          <p class="text-[11px] text-amber-800 font-medium leading-tight">
+            Intervalo de seguridad activo: podrás marcar salida en <strong id="lblTiempoRestante" class="font-tech text-amber-900">--:--</strong>.
+          </p>
+        </div>
+
         <!-- Botones de Marcaje Directo -->
         <div class="grid grid-cols-2 gap-2 pt-1">
           <button id="btnMarcarEntrada" onclick="marcar('entrada')" class="py-3 px-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-25 disabled:cursor-not-allowed transition">
@@ -349,8 +357,9 @@
 
   <!-- MOTOR BIOMÉTRICO Y LÓGICA -->
   <script>
-    const DB_KEY = "abasto_control_v7_white_db";
+    const DB_KEY = "abasto_control_v8_white_db";
     const PIN_ADMIN = "1234";
+    const INTERVALO_BLOQUEO_MINUTOS = 5; // 5 Minutos de espera obligatorios
 
     const defaultData = {
       trabajadores: [
@@ -369,6 +378,7 @@
     let faceMatcher = null;
     let descriptorTemporalAdmin = null;
     let fotoTemporalAdmin = null;
+    let intervaloTimer = null;
 
     function getHoy() {
       const d = new Date();
@@ -545,13 +555,55 @@
       document.getElementById("txtEntrada").innerText = rec.entrada || "--:--";
       document.getElementById("txtSalida").innerText = rec.salida || "--:--";
 
+      // 1. Estado de botón entrada
       document.getElementById("btnMarcarEntrada").disabled = !!rec.entrada;
-      document.getElementById("btnMarcarSalida").disabled = !rec.entrada || !!rec.salida;
+
+      // 2. Control del intervalo de seguridad de 5 minutos para marcar salida
+      evaluarIntervaloSalida(rec);
 
       lucide.createIcons();
     }
 
+    function evaluarIntervaloSalida(rec) {
+      if (intervaloTimer) clearInterval(intervaloTimer);
+      const btnSalida = document.getElementById("btnMarcarSalida");
+      const boxBloqueo = document.getElementById("boxBloqueoIntervalo");
+      const lblTiempo = document.getElementById("lblTiempoRestante");
+
+      // Si no ha marcado entrada o ya marcó salida, deshabilitar botón y ocultar alerta
+      if (!rec.entrada || rec.salida) {
+        btnSalida.disabled = !rec.entrada || !!rec.salida;
+        boxBloqueo.classList.add("hidden");
+        return;
+      }
+
+      const tiempoBloqueoMs = INTERVALO_BLOQUEO_MINUTOS * 60 * 1000;
+
+      function actualizarConteo() {
+        const ahora = Date.now();
+        const transcurrido = ahora - (rec.timestampEntrada || (ahora - tiempoBloqueoMs - 1000));
+        const restanteMs = tiempoBloqueoMs - transcurrido;
+
+        if (restanteMs > 0) {
+          btnSalida.disabled = true;
+          boxBloqueo.classList.remove("hidden");
+          const segRestantes = Math.ceil(restanteMs / 1000);
+          const min = Math.floor(segRestantes / 60);
+          const seg = segRestantes % 60;
+          lblTiempo.innerText = `${min}:${String(seg).padStart(2, '0')} min`;
+        } else {
+          btnSalida.disabled = false;
+          boxBloqueo.classList.add("hidden");
+          if (intervaloTimer) clearInterval(intervaloTimer);
+        }
+      }
+
+      actualizarConteo();
+      intervaloTimer = setInterval(actualizarConteo, 1000);
+    }
+
     function deseleccionar() {
+      if (intervaloTimer) clearInterval(intervaloTimer);
       trabajadorActivo = null;
       document.getElementById("fichaTrabajador").classList.add("hidden");
       document.getElementById("esperandoRostroMsg").classList.remove("hidden");
@@ -564,12 +616,13 @@
 
       let rec = appData.marcas.find(m => m.trabajadorId === trabajadorActivo.id && m.fecha === hoy);
       if (!rec) {
-        rec = { trabajadorId: trabajadorActivo.id, fecha: hoy, entrada: null, salida: null };
+        rec = { trabajadorId: trabajadorActivo.id, fecha: hoy, entrada: null, salida: null, timestampEntrada: null };
         appData.marcas.push(rec);
       }
 
       if (tipo === 'entrada') {
         rec.entrada = ahora;
+        rec.timestampEntrada = Date.now(); // Guardar momento exacto de la entrada
         const [hT, mT] = trabajadorActivo.entrada.split(':').map(Number);
         const [hA, mA] = ahora.split(':').map(Number);
         const diff = (hA * 60 + mA) - (hT * 60 + mT);
@@ -578,8 +631,13 @@
         appData.retrasosSemanales[trabajadorActivo.id] = (appData.retrasosSemanales[trabajadorActivo.id] || 0) + late;
         showToast(late > 0 ? `Entrada: ${ahora} (${late} min retraso)` : `¡Puntual! Entrada: ${ahora}`);
       } else if (tipo === 'salida') {
+        // Doble validación de los 5 minutos
+        if (rec.timestampEntrada && (Date.now() - rec.timestampEntrada < INTERVALO_BLOQUEO_MINUTOS * 60 * 1000)) {
+          showToast(`Debes esperar ${INTERVALO_BLOQUEO_MINUTOS} minutos tras tu entrada para marcar salida`);
+          return;
+        }
         rec.salida = ahora;
-        showToast(`Salida registrada: ${ahora}. ¡Hasta mañana!`);
+        showToast(`Salida registrada: ${ahora}. ¡Buen descanso!`);
       }
 
       guardarStorage();
